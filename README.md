@@ -1,12 +1,12 @@
-# localchat
+# lanDrop
 
 LAN file & message sharing. Telegram-style UI. Zero config.
 
 ## Install & Run
 
 ```bash
-git clone https://github.com/appxa/localchat.git
-cd localchat
+git clone https://github.com/appxa/landrop.git
+cd landrop
 npm install
 node server.js
 ```

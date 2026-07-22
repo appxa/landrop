@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>localchat</title>
+<title>lanDrop</title>
 <style>
   /* --- Telegram dark theme --- */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -200,7 +200,7 @@
   <!-- SIDEBAR -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <span>localchat</span>
+      <span>lanDrop</span>
       <span class="self-info" id="selfInfo">Connecting...</span>
     </div>
     <div class="peer-list" id="peerList">
@@ -231,7 +231,7 @@
   <!-- WELCOME -->
   <div class="welcome" id="welcome">
     <div class="logo">&#128172;</div>
-    <h2>localchat</h2>
+    <h2>lanDrop</h2>
     <p>Select a contact to start chatting</p>
     <div class="url-show" id="urlDisplay"></div>
   </div>
@@ -285,7 +285,7 @@ function connect() {
       case 'self':
         selfId = msg.id; selfName = msg.name; selfColor = msg.color;
         selfInfo.textContent = `${msg.name}`;
-        document.title = `localchat — ${msg.name}`;
+        document.title = `lanDrop — ${msg.name}`;
         break;
 
       case 'peer_list':
