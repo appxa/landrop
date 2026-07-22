@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>localchat</title>
+<style>
+  /* --- Telegram dark theme --- */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #212121;
+    --surface: #212121;
+    --surface2: #2f2f2f;
+    --border: #424242;
+    --text: #ececec;
+    --text-muted: #b4b4b4;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --user-bubble: #2f2f2f;
+    --other-bubble: #212121;
+    --radius: 16px;
+    --radius-sm: 8px;
+    --sidebar-w: 320px;
+  }
+  html, body { height: 100%; font: 14px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background: var(--bg); color: var(--text); overflow: hidden; }
+  input, textarea, button { font: inherit; color: inherit; outline: none; border: none; }
+
+  /* --- Layout --- */
+  .app { display: flex; height: 100%; }
+
+  /* ======== SIDEBAR ======== */
+  .sidebar {
+    width: var(--sidebar-w); min-width: var(--sidebar-w);
+    background: var(--bg); display: flex; flex-direction: column;
+    border-right: 1px solid var(--border);
+  }
+  .sidebar-header {
+    padding: 16px 20px; font-size: 18px; font-weight: 600;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sidebar-header .self-info { font-size: 13px; font-weight: 400; color: var(--text-muted); }
+  .peer-list { flex: 1; overflow-y: auto; }
+  .peer-list::-webkit-scrollbar { width: 4px; }
+  .peer-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .peer-item {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    cursor: pointer; transition: background 0.1s;
+  }
+  .peer-item:hover { background: var(--surface2); }
+  .peer-item.active { background: var(--surface2); }
+
+  .peer-avatar {
+    width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 600; color: #fff;
+    position: relative;
+  }
+  .peer-avatar .online-dot {
+    position: absolute; bottom: 1px; right: 1px;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: #4ade80; border: 2px solid var(--bg);
+  }
+  .peer-item .peer-name { font-size: 15px; font-weight: 500; flex: 1; }
+  .peer-item .peer-status { font-size: 13px; color: var(--text-muted); }
+  .peer-item .peer-status.online { color: #4ade80; }
+
+  .empty-list { padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 14px; }
+
+  /* ======== CHAT AREA ======== */
+  .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg); min-width: 0; }
+
+  .chat-header {
+    padding: 12px 20px; background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+    max-width: 720px; width: 100%;
+  }
+  .chat-header .peer-avatar { width: 40px; height: 40px; font-size: 15px; }
+  .chat-header .peer-avatar .online-dot { border-color: var(--bg); }
+  .chat-header-info { flex: 1; }
+  .chat-header-name { font-size: 15px; font-weight: 600; }
+  .chat-header-status { font-size: 12px; color: var(--text-muted); }
+  .chat-header-status.online { color: #4ade80; }
+
+  /* ======== MESSAGES ======== */
+  .messages {
+    flex: 1; overflow-y: auto; padding: 12px 20px;
+    display: flex; flex-direction: column; gap: 4px;
+    max-width: 720px; width: 100%;
+  }
+  .messages::-webkit-scrollbar { width: 4px; }
+  .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .msg-group { display: flex; flex-direction: column; max-width: 40%; }
+  .msg-group.own { align-self: flex-end; align-items: flex-end; }
+  .msg-group.other { align-self: flex-start; align-items: flex-start; }
+
+  .msg-bubble {
+    padding: 8px 12px; border-radius: 12px; font-size: 14px; line-height: 1.5;
+    position: relative; overflow-wrap: anywhere;
+  }
+  .msg-bubble.tail-own { border-bottom-right-radius: 4px; }
+  .msg-bubble.tail-other { border-bottom-left-radius: 4px; }
+  .own .msg-bubble { background: var(--user-bubble); color: #fff; }
+  .other .msg-bubble { background: var(--other-bubble); color: var(--text); }
+  .msg-bubble .msg-time {
+    font-size: 11px; color: rgba(255,255,255,0.5); float: right;
+    margin-left: 8px; margin-top: 4px; user-select: none;
+  }
+  .other .msg-bubble .msg-time { color: rgba(255,255,255,0.35); }
+  .msg-sender {
+    font-size: 12px; font-weight: 600; margin-bottom: 2px; padding-left: 4px;
+  }
+
+  /* File attachment cards inside messages */
+  .file-card {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 0; min-width: 200px; cursor: pointer;
+  }
+  .file-icon {
+    width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,0.1); font-size: 20px;
+  }
+  .file-info { flex: 1; min-width: 0; }
+  .file-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-size { font-size: 11px; opacity: 0.6; }
+  .file-dl { font-size: 11px; color: var(--accent); cursor: pointer; }
+
+  /* System message */
+  .sys-msg {
+    text-align: center; font-size: 12px; color: var(--text-muted);
+    padding: 6px 0; user-select: none;
+  }
+
+  /* ======== INPUT BAR ======== */
+  .input-bar {
+    padding: 8px 12px; background: var(--bg);
+    border-top: 1px solid var(--border);
+    display: flex; align-items: flex-end; gap: 8px;
+    max-width: 720px; width: 100%;
+  }
+  .btn-attach {
+    width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+    background: transparent; cursor: pointer; font-size: 22px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); transition: color 0.15s;
+  }
+  .btn-attach:hover { color: var(--accent); }
+  .input-bar textarea {
+    flex: 1; padding: 10px 14px; border-radius: 20px; resize: none;
+    background: var(--surface2); color: var(--text); min-height: 20px;
+    max-height: 120px; line-height: 1.4;
+  }
+  .input-bar textarea::placeholder { color: var(--text-muted); }
+  .btn-send {
+    width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+    background: var(--accent); cursor: pointer; font-size: 18px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; transition: opacity 0.15s;
+  }
+  .btn-send:disabled { opacity: 0.4; cursor: default; }
+  .btn-send:hover:not(:disabled) { background: var(--accent-hover); }
+
+  /* ======== WELCOME / NO CHAT ======== */
+  .welcome {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: var(--bg); color: var(--text-muted);
+    gap: 12px;
+  }
+  .welcome .logo { font-size: 64px; opacity: 0.3; }
+  .welcome h2 { font-size: 22px; font-weight: 400; color: var(--text); opacity: 0.5; }
+  .welcome p { font-size: 14px; }
+  .welcome .url-show { font-size: 13px; color: var(--accent); margin-top: 8px; }
+
+  /* ======== DRAG OVERLAY ======== */
+  .drag-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,0.6); display: none;
+    align-items: center; justify-content: center;
+    font-size: 24px; color: #fff; border: 4px dashed var(--accent);
+  }
+  .drag-overlay.show { display: flex; }
+
+  /* ======== RESPONSIVE ======== */
+  @media (max-width: 720px) {
+    .sidebar { width: 100%; min-width: 100%; }
+    .sidebar.show-chat { display: none; }
+    .chat-area.show-chat { display: flex; }
+    .chat-area { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span>localchat</span>
+      <span class="self-info" id="selfInfo">Connecting...</span>
+    </div>
+    <div class="peer-list" id="peerList">
+      <div class="empty-list">No one on your network yet.<br>Share this page with others on the same WiFi.</div>
+    </div>
+  </aside>
+
+  <!-- CHAT AREA -->
+  <main class="chat-area" id="chatArea" style="display:none;">
+    <div class="chat-header" id="chatHeader">
+      <div class="peer-avatar" id="chatAvatar" style="background:#555;">
+        <span id="chatAvatarText">?</span>
+      </div>
+      <div class="chat-header-info">
+        <div class="chat-header-name" id="chatName">Select a contact</div>
+        <div class="chat-header-status" id="chatStatus">offline</div>
+      </div>
+    </div>
+    <div class="messages" id="messages"></div>
+    <div class="input-bar">
+      <label class="btn-attach" title="Send file" id="attachBtn">+</label>
+      <input type="file" id="fileInput" style="display:none" multiple>
+      <textarea rows="1" placeholder="Message..." id="msgInput" onkeydown="onInputKey(event)"></textarea>
+      <button class="btn-send" id="sendBtn" disabled onclick="sendMessage()">&#10148;</button>
+    </div>
+  </main>
+
+  <!-- WELCOME -->
+  <div class="welcome" id="welcome">
+    <div class="logo">&#128172;</div>
+    <h2>localchat</h2>
+    <p>Select a contact to start chatting</p>
+    <div class="url-show" id="urlDisplay"></div>
+  </div>
+
+  <input type="file" id="fileDropInput" style="display:none" multiple>
+</div>
+
+<div class="drag-overlay" id="dragOverlay">Drop files to send</div>
+
+<script>
+// ======== STATE ========
+let ws = null;
+let selfId = null;
+let selfName = '';
+let selfColor = '';
+const peers = {};          // id -> { name, color, online }
+const chats = {};          // peerId -> [{ from, content, time, file? }]
+let selectedPeer = null;
+let sendingFile = false;
+const fileChunk = 1024 * 1024; // 1MB
+
+// ======== DOM refs ========
+const $ = s => document.querySelector(s);
+const peerList = document.getElementById('peerList');
+const messages = document.getElementById('messages');
+const msgInput = document.getElementById('msgInput');
+const sendBtn = document.getElementById('sendBtn');
+const chatArea = document.getElementById('chatArea');
+const welcome = document.getElementById('welcome');
+const chatName = document.getElementById('chatName');
+const chatStatus = document.getElementById('chatStatus');
+const chatAvatar = document.getElementById('chatAvatar');
+const chatAvatarText = document.getElementById('chatAvatarText');
+const selfInfo = document.getElementById('selfInfo');
+const fileInput = document.getElementById('fileInput');
+const fileDropInput = document.getElementById('fileDropInput');
+const dragOverlay = document.getElementById('dragOverlay');
+
+// ======== CONNECT ========
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}`);
+
+  ws.onopen = () => { console.log('Connected'); };
+
+  ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+
+    switch (msg.type) {
+      case 'self':
+        selfId = msg.id; selfName = msg.name; selfColor = msg.color;
+        selfInfo.textContent = `${msg.name}`;
+        document.title = `localchat — ${msg.name}`;
+        break;
+
+      case 'peer_list':
+        Object.keys(peers).forEach(k => delete peers[k]);
+        msg.peers.forEach(p => { peers[p.id] = { name: p.name, color: p.color, online: true }; });
+        renderPeerList();
+        updateChatHeader();
+        break;
+
+      case 'peer_joined':
+        peers[msg.id] = { name: msg.name, color: msg.color, online: true };
+        renderPeerList();
+        addSystemMsg(`${msg.name} joined`);
+        break;
+
+      case 'peer_left':
+        if (peers[msg.id]) {
+          const name = peers[msg.id].name;
+          delete peers[msg.id];
+          renderPeerList();
+          addSystemMsg(`${name} left`);
+          if (selectedPeer === msg.id) selectedPeer = null;
+        }
+        break;
+
+      case 'message':
+        const chatId = msg.from === selfId ? (selectedPeer || 'self') : msg.from;
+        if (!chats[chatId]) chats[chatId] = [];
+        chats[chatId].push({ from: msg.from, fromName: msg.fromName, fromColor: msg.fromColor, content: msg.content, time: msg.timestamp });
+        renderMessages();
+        break;
+
+      case 'file':
+        if (msg.ack) break; // echo — already added locally in sendFiles()
+        const fchatId = msg.from === selfId ? (selectedPeer || 'self') : msg.from;
+        if (!chats[fchatId]) chats[fchatId] = [];
+        chats[fchatId].push({ from: msg.from, fromName: msg.fromName, fromColor: msg.fromColor, file: { id: msg.fileId, name: msg.fileName, size: msg.fileSize, mime: msg.mimeType }, time: msg.timestamp });
+        renderMessages();
+        break;
+
+      case 'error':
+        // Could show a toast
+        break;
+    }
+  };
+
+  ws.onclose = () => {
+    selfInfo.textContent = 'Disconnected — retrying...';
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+// ======== SEND TEXT ========
+function sendMessage() {
+  const text = msgInput.value.trim();
+  if (!text || !selectedPeer || sendingFile) return;
+  ws.send(JSON.stringify({ type: 'message', content: text, to: selectedPeer }));
+  msgInput.value = '';
+  msgInput.style.height = 'auto';
+  sendBtn.disabled = true;
+}
+
+// ======== SEND FILE ========
+document.getElementById('attachBtn').onclick = () => fileInput.click();
+fileInput.onchange = () => {
+  if (!fileInput.files.length || !selectedPeer) return;
+  sendFiles(fileInput.files);
+  fileInput.value = '';
+};
+
+function sendFiles(files) {
+  sendingFile = true;
+  let i = 0;
+  function next() {
+    if (i >= files.length) { sendingFile = false; return; }
+    const file = files[i++];
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const buffer = e.target.result;
+      const blob = new Blob([buffer]);
+      // Upload via HTTP POST
+      const fd = new FormData();
+      fd.append('file', blob, file.name);
+      fetch('/upload', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(data => {
+          ws.send(JSON.stringify({
+            type: 'file', to: selectedPeer,
+            fileId: data.fileId, fileName: file.name, fileSize: file.size, mimeType: file.type,
+          }));
+          // Add file message to own chat
+          if (!chats[selectedPeer]) chats[selectedPeer] = [];
+          chats[selectedPeer].push({
+            from: selfId, fromName: selfName, fromColor: selfColor,
+            file: { id: data.fileId, name: file.name, size: file.size, mime: file.type },
+            time: Date.now(),
+          });
+          renderMessages();
+          next();
+        })
+        .catch(() => { sendingFile = false; });
+    };
+    reader.readAsArrayBuffer(file);
+  }
+  addSystemMsg(`Sending ${files.length} file(s)...`);
+  next();
+}
+
+// ======== PEER SELECTION ========
+function selectPeer(id) {
+  selectedPeer = id;
+  if (!chats[id]) chats[id] = [];
+  renderPeerList();
+  renderMessages();
+  chatArea.style.display = 'flex';
+  welcome.style.display = 'none';
+  updateChatHeader();
+  msgInput.focus();
+
+  // Mobile: hide sidebar
+  if (window.innerWidth <= 720) {
+    document.getElementById('sidebar').classList.add('show-chat');
+    chatArea.classList.add('show-chat');
+  }
+}
+
+function updateChatHeader() {
+  if (!selectedPeer) {
+    chatName.textContent = 'Select a contact';
+    chatStatus.textContent = '';
+    chatStatus.className = 'chat-header-status';
+    return;
+  }
+  const p = peers[selectedPeer];
+  if (p) {
+    chatName.textContent = p.name;
+    chatAvatar.style.background = p.color;
+    chatAvatarText.textContent = p.name.slice(-1);
+    chatStatus.textContent = 'online';
+    chatStatus.className = 'chat-header-status online';
+  }
+}
+
+// ======== RENDER PEER LIST ========
+function renderPeerList() {
+  const ids = Object.keys(peers).filter(id => id !== selfId);
+
+  if (ids.length === 0) {
+    peerList.innerHTML = '<div class="empty-list">No one on your network yet.<br>Share this page with others on the same WiFi.</div>';
+    return;
+  }
+
+  peerList.innerHTML = ids
+    .map(id => {
+      const p = peers[id];
+      const active = id === selectedPeer ? ' active' : '';
+      return `<div class="peer-item${active}" onclick="selectPeer('${id}')">
+        <div class="peer-avatar" style="background:${p.color}">${p.name.slice(-1)}<span class="online-dot"></span></div>
+        <div>
+          <div class="peer-name">${p.name}</div>
+          <span class="peer-status online">online</span>
+        </div>
+      </div>`;
+    })
+    .join('');
+}
+
+// ======== RENDER MESSAGES ========
+function renderMessages() {
+  if (!selectedPeer || !chats[selectedPeer]) return;
+  const msgs = chats[selectedPeer];
+  messages.innerHTML = msgs.map((m, idx) => {
+    const isOwn = m.from === selfId;
+    const cls = isOwn ? 'own' : 'other';
+    const time = m.time ? new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+    if (m.file) {
+      const icon = getFileIcon(m.file.name);
+      const size = formatSize(m.file.size);
+      return `<div class="msg-group ${cls}">
+        ${!isOwn ? `<div class="msg-sender" style="color:${m.fromColor}">${m.fromName}</div>` : ''}
+        <div class="msg-bubble${idx === msgs.length-1 ? (isOwn ? ' tail-own' : ' tail-other') : ''}">
+          <div class="file-card" onclick="downloadFile('${m.file.id}','${m.file.name}','${m.file.mime}')">
+            <div class="file-icon">${icon}</div>
+            <div class="file-info">
+              <div class="file-name">${m.file.name}</div>
+              <div class="file-size">${size}</div>
+              <div class="file-dl">Download</div>
+            </div>
+          </div>
+          <span class="msg-time">${time}</span>
+        </div>
+      </div>`;
+    }
+
+    return `<div class="msg-group ${cls}">
+      ${!isOwn ? `<div class="msg-sender" style="color:${m.fromColor}">${m.fromName}</div>` : ''}
+      <div class="msg-bubble${idx === msgs.length-1 ? (isOwn ? ' tail-own' : ' tail-other') : ''}">
+        ${escapeHtml(m.content)}
+        <span class="msg-time">${time}</span>
+      </div>
+    </div>`;
+  }).join('');
+  scrollToBottom();
+}
+
+function addSystemMsg(text) {
+  const div = document.createElement('div');
+  div.className = 'sys-msg';
+  div.textContent = text;
+  messages.appendChild(div);
+  scrollToBottom();
+}
+
+function scrollToBottom() {
+  requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; });
+}
+
+// ======== FILE DOWNLOAD ========
+function downloadFile(fileId, fileName, mime) {
+  const a = document.createElement('a');
+  a.href = `/download/${fileId}`;
+  a.download = fileName;
+  a.click();
+}
+
+// ======== INPUT HANDLING ========
+function onInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  // Auto-resize
+  const el = e.target;
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  sendBtn.disabled = !el.value.trim();
+}
+
+msgInput.oninput = function() {
+  sendBtn.disabled = !this.value.trim();
+};
+
+// ======== DRAG & DROP ========
+document.addEventListener('dragover', (e) => { e.preventDefault(); dragOverlay.classList.add('show'); });
+document.addEventListener('dragleave', (e) => {
+  if (e.target === document || !document.contains(e.relatedTarget)) dragOverlay.classList.remove('show');
+});
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragOverlay.classList.remove('show');
+  if (!selectedPeer) return;
+  const files = e.dataTransfer.files;
+  if (files.length) sendFiles(files);
+});
+
+fileDropInput.onchange = () => {
+  if (fileDropInput.files.length) sendFiles(fileDropInput.files);
+  fileDropInput.value = '';
+};
+
+// ======== HELPERS ========
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  if (bytes < 1024*1024*1024) return (bytes/(1024*1024)).toFixed(1) + ' MB';
+  return (bytes/(1024*1024*1024)).toFixed(1) + ' GB';
+}
+
+function getFileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  if (['jpg','jpeg','png','gif','svg','webp','bmp'].includes(ext)) return '🖼';
+  if (['mp4','avi','mkv','mov','webm'].includes(ext)) return '🎬';
+  if (['mp3','wav','ogg','flac'].includes(ext)) return '🎵';
+  if (['pdf'].includes(ext)) return '📄';
+  if (['zip','rar','7z','tar','gz'].includes(ext)) return '📦';
+  if (['doc','docx'].includes(ext)) return '📝';
+  if (['xls','xlsx'].includes(ext)) return '📊';
+  return '📎';
+}
+
+// ======== SHOW URL ========
+document.getElementById('urlDisplay').textContent = `${location.origin}`;
+
+// ======== RESPONSIVE BACK ========
+document.querySelector('.chat-header').onclick = function(e) {
+  if (window.innerWidth <= 720) {
+    document.getElementById('sidebar').classList.remove('show-chat');
+    chatArea.classList.remove('show-chat');
+  }
+};
+// Back button on mobile: click avatar/name area goes back to sidebar
+document.querySelector('.chat-header-info').onclick = function(e) {
+  if (window.innerWidth <= 720) {
+    document.getElementById('sidebar').classList.remove('show-chat');
+    chatArea.classList.remove('show-chat');
+  }
+};
+
+// ======== START ========
+connect();
+</script>
+</body>
+</html>
