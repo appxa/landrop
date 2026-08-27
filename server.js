@@ -4,6 +4,7 @@ const { WebSocketServer } = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const multer = require('multer');
 
 const PORT = process.env.PORT || 3000;
@@ -20,8 +21,20 @@ const files = new Map();          // fileId -> { name, size, mime, buffer }
 // Multer for file uploads (memoryStorage)
 const upload = multer({ storage: multer.memoryStorage() });
 
-// --- Serve static files ---
+// --- Static files ---
 app.use(express.static(path.join(__dirname, 'public')));
+
+// --- LAN IP (for the join address) ---
+app.get('/api/ip', (req, res) => {
+  let lan = '';
+  for (const iface of Object.values(os.networkInterfaces() || {})) {
+    for (const net of iface) {
+      if (net.family === 'IPv4' && !net.internal) { lan = net.address; break; }
+    }
+    if (lan) break;
+  }
+  res.json({ ip: lan || '127.0.0.1', port: PORT });
+});
 
 // --- File upload endpoint ---
 app.post('/upload', upload.single('file'), (req, res) => {

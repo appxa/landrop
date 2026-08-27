@@ -74,6 +74,7 @@
   .chat-header {
     padding: 12px 20px; background: var(--bg);
     border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
     display: flex; align-items: center; gap: 12px;
     max-width: 720px; width: 100%;
   }
@@ -89,6 +90,7 @@
     flex: 1; overflow-y: auto; padding: 12px 20px;
     display: flex; flex-direction: column; gap: 4px;
     max-width: 720px; width: 100%;
+    border-right: 1px solid var(--border);
   }
   .messages::-webkit-scrollbar { width: 4px; }
   .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
@@ -128,6 +130,9 @@
   .file-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .file-size { font-size: 11px; opacity: 0.6; }
   .file-dl { font-size: 11px; color: var(--accent); cursor: pointer; }
+  .file-progress { height: 4px; background: rgba(255,255,255,0.15); border-radius: 4px; margin-top: 6px; overflow: hidden; }
+  .file-progress-bar { height: 100%; background: var(--accent); width: 0; }
+  .file-progress-text { font-size: 11px; opacity: 0.7; margin-top: 2px; }
 
   /* System message */
   .sys-msg {
@@ -139,6 +144,7 @@
   .input-bar {
     padding: 8px 12px; background: var(--bg);
     border-top: 1px solid var(--border);
+    border-right: 1px solid var(--border);
     display: flex; align-items: flex-end; gap: 8px;
     max-width: 720px; width: 100%;
   }
@@ -232,7 +238,7 @@
   <div class="welcome" id="welcome">
     <div class="logo">&#128172;</div>
     <h2>lanDrop</h2>
-    <p>Select a contact to start chatting</p>
+    <p>open this address in phone browser</p>
     <div class="url-show" id="urlDisplay"></div>
   </div>
 
@@ -364,36 +370,54 @@ function sendFiles(files) {
   function next() {
     if (i >= files.length) { sendingFile = false; return; }
     const file = files[i++];
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const buffer = e.target.result;
-      const blob = new Blob([buffer]);
-      // Upload via HTTP POST
-      const fd = new FormData();
-      fd.append('file', blob, file.name);
-      fetch('/upload', { method: 'POST', body: fd })
-        .then(r => r.json())
-        .then(data => {
-          ws.send(JSON.stringify({
-            type: 'file', to: selectedPeer,
-            fileId: data.fileId, fileName: file.name, fileSize: file.size, mimeType: file.type,
-          }));
-          // Add file message to own chat
-          if (!chats[selectedPeer]) chats[selectedPeer] = [];
-          chats[selectedPeer].push({
-            from: selfId, fromName: selfName, fromColor: selfColor,
-            file: { id: data.fileId, name: file.name, size: file.size, mime: file.type },
-            time: Date.now(),
-          });
-          renderMessages();
-          next();
-        })
-        .catch(() => { sendingFile = false; });
+    const msgObj = {
+      from: selfId, fromName: selfName, fromColor: selfColor,
+      file: { id: null, name: file.name, size: file.size, mime: file.type },
+      time: Date.now(), uploading: true, progress: 0,
     };
-    reader.readAsArrayBuffer(file);
+    if (!chats[selectedPeer]) chats[selectedPeer] = [];
+    chats[selectedPeer].push(msgObj);
+    renderMessages();
+
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/upload');
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      msgObj.progress = Math.round(e.loaded / e.total * 100);
+      updateFileProgress(msgObj);
+    };
+    xhr.onload = () => {
+      if (xhr.status !== 200) { fail(file.name); return; }
+      const data = JSON.parse(xhr.responseText);
+      msgObj.file.id = data.fileId;
+      msgObj.uploading = false;
+      ws.send(JSON.stringify({
+        type: 'file', to: selectedPeer,
+        fileId: data.fileId, fileName: file.name, fileSize: file.size, mimeType: file.type,
+      }));
+      renderMessages();
+      next();
+    };
+    xhr.onerror = () => fail(file.name);
+    xhr.send(fd);
+
+    function fail(name) {
+      msgObj.uploading = false;
+      addSystemMsg(`Failed to send ${name}`);
+      sendingFile = false;
+    }
   }
   addSystemMsg(`Sending ${files.length} file(s)...`);
   next();
+}
+
+function updateFileProgress(msgObj) {
+  const bar = document.querySelector(`.file-progress-bar[data-fp="${msgObj.time}"]`);
+  const txt = document.querySelector(`.file-progress-text[data-fp="${msgObj.time}"]`);
+  if (bar) bar.style.width = msgObj.progress + '%';
+  if (txt) txt.textContent = msgObj.progress + '%';
 }
 
 // ======== PEER SELECTION ========
@@ -467,15 +491,22 @@ function renderMessages() {
     if (m.file) {
       const icon = getFileIcon(m.file.name);
       const size = formatSize(m.file.size);
+      let clickAttr = '', dl = '';
+      if (m.uploading) {
+        dl = `<div class="file-progress"><div class="file-progress-bar" data-fp="${m.time}" style="width:${m.progress||0}%"></div></div><div class="file-progress-text" data-fp="${m.time}">${m.progress||0}%</div>`;
+      } else if (m.file.id) {
+        clickAttr = ` onclick="downloadFile('${m.file.id}','${m.file.name}','${m.file.mime}')"`;
+        dl = `<div class="file-dl">Download</div>`;
+      }
       return `<div class="msg-group ${cls}">
         ${!isOwn ? `<div class="msg-sender" style="color:${m.fromColor}">${m.fromName}</div>` : ''}
         <div class="msg-bubble${idx === msgs.length-1 ? (isOwn ? ' tail-own' : ' tail-other') : ''}">
-          <div class="file-card" onclick="downloadFile('${m.file.id}','${m.file.name}','${m.file.mime}')">
+          <div class="file-card"${clickAttr}>
             <div class="file-icon">${icon}</div>
             <div class="file-info">
               <div class="file-name">${m.file.name}</div>
               <div class="file-size">${size}</div>
-              <div class="file-dl">Download</div>
+              ${dl}
             </div>
           </div>
           <span class="msg-time">${time}</span>
@@ -572,8 +603,18 @@ function getFileIcon(name) {
   return '📎';
 }
 
-// ======== SHOW URL ========
-document.getElementById('urlDisplay').textContent = `${location.origin}`;
+// ======== SHOW URL / JOIN ADDRESS ========
+let joinUrl = `${location.origin}/`;
+document.getElementById('urlDisplay').textContent = joinUrl;
+
+// Use the server's real LAN IP so others can actually join
+fetch('/api/ip')
+  .then(r => r.json())
+  .then(d => {
+    joinUrl = `http://${d.ip}:${d.port}/`;
+    document.getElementById('urlDisplay').textContent = joinUrl;
+  })
+  .catch(() => {});
 
 // ======== RESPONSIVE BACK ========
 document.querySelector('.chat-header').onclick = function(e) {
