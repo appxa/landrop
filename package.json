@@ -29,8 +29,10 @@
       "main": "electron/main.js"
     },
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
+    "icon": "build/icon.png",
     "linux": {
       "target": [
         "deb",

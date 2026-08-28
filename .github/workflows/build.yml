@@ -56,7 +56,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
       - run: npm ci --no-audit --no-fund
       - name: Copy server.js for Android
         run: cp server.js public/nodejs/server.js
