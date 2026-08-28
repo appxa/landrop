@@ -39,11 +39,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: landrop-windows
-          path: dist/lanDrop-*.exe
+          path: dist/*.exe
       - uses: actions/upload-artifact@v4
         with:
           name: landrop-msi
-          path: dist/lanDrop-*.msi
+          path: dist/*.msi
 
   android:
     runs-on: ubuntu-latest
