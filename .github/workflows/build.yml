@@ -1,0 +1,74 @@
+name: Build
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx electron-builder --linux --publish=never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: landrop-linux
+          path: dist/lanDrop-*.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: landrop-deb
+          path: dist/landrop_*.deb
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx electron-builder --win --publish=never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: landrop-windows
+          path: dist/lanDrop-*.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: landrop-msi
+          path: dist/lanDrop-*.msi
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm ci --no-audit --no-fund
+      - name: Copy server.js for Android
+        run: cp server.js public/nodejs/server.js
+      - name: Install nodejs project deps
+        working-directory: public/nodejs
+        run: npm ci --no-audit --no-fund
+      - name: Sync Capacitor
+        run: npx cap sync android
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew assembleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: landrop-apk
+          path: android/app/build/outputs/apk/release/app-release-*.apk

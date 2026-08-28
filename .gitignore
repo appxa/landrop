@@ -1,2 +1,6 @@
+dist/
 node_modules/
-.env
+public/nodejs/node_modules/
+public/nodejs/server.js
+*.log
+.DS_Store

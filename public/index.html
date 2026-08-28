@@ -277,9 +277,14 @@ const fileDropInput = document.getElementById('fileDropInput');
 const dragOverlay = document.getElementById('dragOverlay');
 
 // ======== CONNECT ========
+// Inside the Android APK the UI is served by Capacitor (https://localhost),
+// while the real server runs on-device at http://127.0.0.1:3000.
+// In a browser the page IS served by the server, so relative URLs work.
+const SERVER = location.protocol === 'https:' ? 'http://127.0.0.1:3000' : '';
+
 function connect() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}`);
+  const proto = SERVER.startsWith('https') ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${SERVER.replace(/^http/, '') || location.host}`);
 
   ws.onopen = () => { console.log('Connected'); };
 
@@ -382,7 +387,7 @@ function sendFiles(files) {
     const fd = new FormData();
     fd.append('file', file, file.name);
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/upload');
+    xhr.open('POST', SERVER + '/upload');
     xhr.upload.onprogress = (e) => {
       if (!e.lengthComputable) return;
       msgObj.progress = Math.round(e.loaded / e.total * 100);
@@ -540,7 +545,7 @@ function scrollToBottom() {
 // ======== FILE DOWNLOAD ========
 function downloadFile(fileId, fileName, mime) {
   const a = document.createElement('a');
-  a.href = `/download/${fileId}`;
+  a.href = SERVER + `/download/${fileId}`;
   a.download = fileName;
   a.click();
 }
@@ -608,7 +613,7 @@ let joinUrl = `${location.origin}/`;
 document.getElementById('urlDisplay').textContent = joinUrl;
 
 // Use the server's real LAN IP so others can actually join
-fetch('/api/ip')
+fetch(SERVER + '/api/ip')
   .then(r => r.json())
   .then(d => {
     joinUrl = `http://${d.ip}:${d.port}/`;
