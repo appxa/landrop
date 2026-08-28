@@ -1,42 +1,37 @@
 # lanDrop
 
-LAN file & message sharing. Telegram-style UI. Zero config.
+LAN file & message sharing. Telegram-style UI. Zero config. Single ~8MB Go binary.
 
-## Install & Run
+## Run
 
 ```bash
-git clone https://github.com/appxa/landrop.git
-cd landrop
-npm install
-node server.js
+go run .          # or: ./dist/landrop
 ```
 
-Open `http://<your-ip>:3000` on any device on the same WiFi.
+The app starts a server on your LAN, prints the URL, and opens your browser.
+Open `http://<your-ip>:3000` on any device on the same WiFi to join.
+
+## Build
+
+```bash
+sh scripts/build-go.sh
+```
+
+Outputs to `dist/`:
+- `dist/landrop` — Linux amd64 binary (~8MB)
+- `dist/landrop.exe` — Windows amd64 binary (~8MB)
+- `dist/landrop_1.0.0_amd64.deb` — Debian/Ubuntu package (~2.3MB)
+
+Cross-compiles from any machine; no Node.js or Electron needed. The whole app
+(server + UI) is a single embedded binary.
 
 ## How it works
 
-Node.js server with WebSocket relay. No signup, no accounts, no database. Files are kept in memory for 10 minutes.
+Go server with WebSocket relay. No signup, no accounts, no database. Files
+are kept in memory for 10 minutes. UI is `public/index.html`, embedded into
+the binary at compile time.
 
-## Build installers
+## CI
 
-Desktop (Windows exe/msi, Linux deb/AppImage) via Electron:
-
-```bash
-npm install
-npm run dist:linux   # deb + AppImage (run on Linux)
-npm run dist:win     # exe + msi (run on Windows, or use CI)
-```
-
-Output goes to `dist/`.
-
-Android APK — the real Node server runs on-device via nodejs-mobile (Capacitor plugin `@capawesome/capacitor-nodejs`):
-
-```bash
-npm install
-npm run android:build   # needs Android SDK + JDK 17
-# or use CI (GitHub Actions builds everything on push/tag)
-```
-
-The Android app bundles `server.js` into `public/nodejs/` (synced by `npm run android:sync`); the WebView UI connects to the on-device server at `127.0.0.1:3000`. Note the frontend auto-detects this — in a normal browser it uses relative URLs as before.
-
-CI: push a tag (`v*`) or run the workflow manually — artifacts land in the Actions run (linux deb/AppImage, windows exe/msi, android apk).
+`.github/workflows/build.yml` builds linux deb + windows exe on push/tag —
+artifacts land in the Actions run.
