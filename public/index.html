@@ -277,14 +277,14 @@ const fileDropInput = document.getElementById('fileDropInput');
 const dragOverlay = document.getElementById('dragOverlay');
 
 // ======== CONNECT ========
-// Inside the Android APK the UI is served by Capacitor (https://localhost),
-// while the real server runs on-device at http://127.0.0.1:3000.
-// In a browser the page IS served by the server, so relative URLs work.
-const SERVER = location.protocol === 'https:' ? 'http://127.0.0.1:3000' : '';
+// The UI is always served by lanDrop itself, so every request and the
+// WebSocket go to the page's own origin. (An earlier build shipped the UI
+// inside an Android APK via Capacitor, which needed a hardcoded
+// http://127.0.0.1:3000 here. That build was dropped.)
 
 function connect() {
-  const proto = SERVER.startsWith('https') ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${SERVER.replace(/^http/, '') || location.host}`);
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}`);
 
   ws.onopen = () => { console.log('Connected'); };
 
@@ -391,7 +391,7 @@ function sendFiles(files) {
     // self-reported LAN IP (serverOrigin) is only a hint for humans to copy --
     // it can name a VPN/tunnel or wrong-subnet address that is unreachable from
     // the sending device, which made every send fail with "Failed to send".
-    xhr.open('POST', SERVER + '/upload');
+    xhr.open('POST', '/upload');
     xhr.upload.onprogress = (e) => {
       if (!e.lengthComputable) return;
       msgObj.progress = Math.round(e.loaded / e.total * 100);
@@ -564,7 +564,7 @@ function scrollToBottom() {
 // ======== FILE DOWNLOAD ========
 function downloadFile(fileId, fileName, mime) {
   const a = document.createElement('a');
-  a.href = SERVER + `/download/${fileId}`;
+  a.href = `/download/${fileId}`;
   a.download = fileName;
   a.click();
 }
