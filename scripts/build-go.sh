@@ -17,6 +17,15 @@ printf 'Package: landrop\nVersion: 1.0.0\nSection: net\nPriority: optional\nArch
 dpkg-deb --build /tmp/landrop-deb dist/landrop_1.0.0_amd64.deb >/dev/null
 
 echo "==> AppImage"
+# appimagetool is not part of a stock Go/CI image. Without this guard the
+# script aborts under `set -e` with exit 127 and fails the whole CI run.
+if ! command -v appimagetool >/dev/null 2>&1; then
+  echo "    appimagetool not found - skipping AppImage"
+  echo "    get it from https://github.com/AppImage/AppImageKit/releases, then re-run this script"
+  ls -lh dist/landrop dist/landrop.exe dist/landrop_1.0.0_amd64.deb
+  exit 0
+fi
+rm -rf /tmp/landrop-appdir
 mkdir -p /tmp/landrop-appdir/usr/bin
 cp dist/landrop /tmp/landrop-appdir/usr/bin/
 cp build/icon.png /tmp/landrop-appdir/ 2>/dev/null || true
@@ -31,12 +40,12 @@ cat > /tmp/landrop-appdir/landrop.desktop << 'EOF'
 Name=lanDrop
 Comment=LAN file sharing & chat
 Exec=landrop
-Icon=icon
+Icon=landrop
 Terminal=false
 Type=Application
 Categories=Network;
 EOF
 chmod +x /tmp/landrop-appdir/AppRun
-ARCH=x86_64 appimagetool /tmp/landrop-appdir dist/landrop-linux-amd64.AppImage >/dev/null 2>&1
+ARCH=x86_64 appimagetool /tmp/landrop-appdir dist/landrop-linux-amd64.AppImage >/dev/null
 
 ls -lh dist/landrop dist/landrop.exe dist/landrop_1.0.0_amd64.deb dist/landrop-linux-amd64.AppImage
