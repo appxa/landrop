@@ -22,6 +22,7 @@ jobs:
           path: |
             dist/landrop
             dist/landrop_*.deb
+          retention-days: 7
 
   windows:
     runs-on: ubuntu-latest
@@ -38,3 +39,4 @@ jobs:
         with:
           name: landrop-windows
           path: dist/landrop.exe
+          retention-days: 7
