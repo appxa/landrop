@@ -47,6 +47,17 @@ type peer struct {
 	Name  string `json:"name"`
 	Color string `json:"color"`
 	ws    *websocket.Conn
+	// writeMu serialises writes. gorilla/websocket allows only one concurrent
+	// writer per connection, and a peer can be written to from the read loop,
+	// from broadcastPeerList and from a direct relay at the same time.
+	writeMu sync.Mutex
+}
+
+// send writes one JSON message safely. A failed write means the peer is gone.
+func (p *peer) send(msg map[string]any) error {
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
+	return p.ws.WriteJSON(msg)
 }
 
 var (
@@ -68,17 +79,77 @@ func fileID() string  { return randHex(16) } // 32 hex chars
 
 func peerName(id string) string { return "User_" + id[:4] }
 
-func lanIP() string {
+// Virtual/tunnel interfaces must never be advertised as the join address:
+// a phone on the WiFi cannot reach them.
+var virtualIfaces = map[string]bool{
+	"docker": true, "veth": true, "br-": true, "virbr": true, "vmnet": true,
+	"tun": true, "tap": true, "wg": true, "zt": true, "utun": true, "tailscale": true,
+}
+
+func isVirtualIface(name string) bool {
+	if virtualIfaces[name] {
+		return true
+	}
+	for prefix := range virtualIfaces {
+		if len(prefix) >= 3 && len(name) >= 3 && name[:3] == prefix {
+			return true
+		}
+	}
+	return false
+}
+
+// lanIPs returns every IPv4 address other devices could plausibly reach,
+// best candidate first. Tunnels and virtual adapters are excluded.
+func lanIPs() []string {
 	interfaces, _ := net.Interfaces()
+	var out []string
+	seen := map[string]bool{}
+
+	add := func(ip net.IP) {
+		v4 := ip.To4()
+		if v4 == nil {
+			return // IPv4 only: link-local IPv6 is useless to a phone
+		}
+		s := v4.String()
+		if s == "127.0.0.1" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+
+	// Preferred: the address the OS itself would use to reach the outside
+	// world. This is the interface other devices on the same WiFi can reach.
+	if conn, err := net.Dial("udp", "8.8.8.8:80"); err == nil {
+		if ua, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+			add(ua.IP)
+		}
+		conn.Close()
+	}
+
+	// Fallbacks / extras: real hardware interfaces, wired before wireless.
 	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		// Point-to-point links are tunnels (VPN/wireguard/tun). A phone on the
+		// WiFi can never reach them, so never advertise one.
+		if iface.Flags&net.FlagPointToPoint != 0 || isVirtualIface(iface.Name) {
+			continue
+		}
 		addrs, _ := iface.Addrs()
 		for _, a := range addrs {
-			ipnet, ok := a.(*net.IPNet)
-			if !ok || ipnet.IP.IsLoopback() || ipnet.IP.To4() == nil {
-				continue
+			if ipnet, ok := a.(*net.IPNet); ok {
+				add(ipnet.IP)
 			}
-			return ipnet.IP.String()
 		}
+	}
+	return out
+}
+
+func lanIP() string {
+	if ips := lanIPs(); len(ips) > 0 {
+		return ips[0]
 	}
 	return "127.0.0.1"
 }
@@ -87,11 +158,24 @@ func lanIP() string {
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
+// Keepalive. Without a read deadline a phone that sleeps, changes WiFi or gets
+// backgrounded leaves its peer registered forever, so it keeps showing up in
+// the contact list -- and anything sent to that ghost peer is silently lost.
+const (
+	pongWait   = 60 * time.Second
+	pingPeriod = 25 * time.Second
+)
+
 func handleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(pongWait))
+	})
 
 	id := shortID()
 	c := colors[time.Now().UnixMilli()%int64(len(colors))]
@@ -104,18 +188,40 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	peersByID[id] = p
 	pmu.Unlock()
 
+	// ping ticker; a peer that stops answering is dropped by the read deadline
+	stopPing := make(chan struct{})
+	go func() {
+		t := time.NewTicker(pingPeriod)
+		defer t.Stop()
+		for {
+			select {
+			case <-stopPing:
+				return
+			case <-t.C:
+				p.writeMu.Lock()
+				err := conn.WriteMessage(websocket.PingMessage, nil)
+				p.writeMu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}
+	}()
+
 	// send self info
-	conn.WriteJSON(map[string]any{"type": "self", "id": id, "name": name, "color": c})
+	p.send(map[string]any{"type": "self", "id": id, "name": name, "color": c})
 
 	// notify others
 	broadcastExcept(conn, map[string]any{"type": "peer_joined", "id": id, "name": name, "color": c})
 	broadcastPeerList()
 
 	defer func() {
+		close(stopPing)
 		pmu.Lock()
 		delete(peersByWS, conn)
 		delete(peersByID, id)
 		pmu.Unlock()
+		conn.Close()
 		broadcastExcept(nil, map[string]any{"type": "peer_left", "id": id})
 		broadcastPeerList()
 	}()
@@ -125,9 +231,11 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
+		// Any traffic counts as liveness, not just pongs.
+		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 		var msg map[string]any
 		if err := json.Unmarshal(raw, &msg); err != nil {
-			conn.WriteJSON(map[string]any{"type": "error", "message": "Invalid JSON"})
+			p.send(map[string]any{"type": "error", "message": "Invalid JSON"})
 			continue
 		}
 		typ, _ := msg["type"].(string)
@@ -150,11 +258,11 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 				"content": content, "timestamp": time.Now().UnixMilli(),
 			}
 			if target != nil {
-				target.ws.WriteJSON(out)
+				target.send(out)
 			}
 			// echo ack
 			ack := map[string]any{"type": "message", "from": sender.ID, "fromName": sender.Name, "fromColor": sender.Color, "content": content, "timestamp": time.Now().UnixMilli(), "ack": true}
-			conn.WriteJSON(ack)
+			p.send(ack)
 
 		case "file":
 			out := map[string]any{
@@ -165,23 +273,29 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 				"timestamp": time.Now().UnixMilli(),
 			}
 			if target != nil {
-				target.ws.WriteJSON(out)
+				target.send(out)
 			}
 			ack := map[string]any{"type": "file", "from": sender.ID, "fromName": sender.Name, "fromColor": sender.Color, "fileId": msg["fileId"], "fileName": msg["fileName"], "fileSize": msg["fileSize"], "mimeType": msg["mimeType"], "timestamp": time.Now().UnixMilli(), "ack": true}
-			conn.WriteJSON(ack)
+			p.send(ack)
 		}
 	}
 }
 
 func broadcastExcept(exclude *websocket.Conn, msg map[string]any) {
 	pmu.Lock()
-	defer pmu.Unlock()
+	targets := make([]*peer, 0, len(peersByWS))
 	for conn, p := range peersByWS {
 		if conn != exclude {
-			if err := conn.WriteJSON(msg); err != nil {
-				delete(peersByWS, conn)
-				delete(peersByID, p.ID)
-			}
+			targets = append(targets, p)
+		}
+	}
+	pmu.Unlock()
+	for _, p := range targets {
+		if err := p.send(msg); err != nil {
+			pmu.Lock()
+			delete(peersByWS, p.ws)
+			delete(peersByID, p.ID)
+			pmu.Unlock()
 		}
 	}
 }
@@ -189,42 +303,80 @@ func broadcastExcept(exclude *websocket.Conn, msg map[string]any) {
 func broadcastPeerList() {
 	pmu.Lock()
 	list := make([]map[string]any, 0, len(peersByWS))
+	targets := make([]*peer, 0, len(peersByWS))
 	for _, p := range peersByWS {
 		list = append(list, map[string]any{"id": p.ID, "name": p.Name, "color": p.Color})
+		targets = append(targets, p)
 	}
 	pmu.Unlock()
 	msg := map[string]any{"type": "peer_list", "peers": list}
-	pmu.Lock()
-	for conn, p := range peersByWS {
-		if err := conn.WriteJSON(msg); err != nil {
-			delete(peersByWS, conn)
+	for _, p := range targets {
+		if err := p.send(msg); err != nil {
+			pmu.Lock()
+			delete(peersByWS, p.ws)
 			delete(peersByID, p.ID)
+			pmu.Unlock()
 		}
 	}
-	pmu.Unlock()
 }
 
 // ---------- HTTP handlers ----------
 
-func apiIP(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]any{"ip": lanIP(), "port": port})
+func setCORS(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 }
 
+func apiIP(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	ips := lanIPs()
+	if len(ips) == 0 {
+		ips = []string{"127.0.0.1"}
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"ip":   ips[0],
+		"port": port,
+		"ips":  ips,
+	})
+}
+
+// maxUpload caps a single upload. Files are buffered in RAM, so an unbounded
+// read lets one large video from a phone exhaust the server's memory.
+const maxUpload = 2 << 30 // 2 GiB
+
 func upload(w http.ResponseWriter, r *http.Request) {
-	r.ParseMultipartForm(32 << 20)
+	setCORS(w)
+	if r.Method == http.MethodOptions {
+		return
+	}
+	if r.ContentLength > maxUpload {
+		http.Error(w, "File too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		http.Error(w, "Upload failed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "No file", 400)
+		http.Error(w, "No file", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
-	buf, _ := io.ReadAll(file)
+	buf, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "Upload failed while reading file", http.StatusBadRequest)
+		return
+	}
 	id := fileID()
 	mu.Lock()
 	files[id] = &storedFile{Name: header.Filename, Size: int64(len(buf)), Mime: header.Header.Get("Content-Type"), Buffer: buf}
 	mu.Unlock()
 	// cleanup after 10min
 	time.AfterFunc(10*time.Minute, func() { mu.Lock(); delete(files, id); mu.Unlock() })
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"fileId": id})
 }
 

@@ -387,6 +387,10 @@ function sendFiles(files) {
     const fd = new FormData();
     fd.append('file', file, file.name);
     const xhr = new XMLHttpRequest();
+    // Always upload to the origin this page was served from. The server's
+    // self-reported LAN IP (serverOrigin) is only a hint for humans to copy --
+    // it can name a VPN/tunnel or wrong-subnet address that is unreachable from
+    // the sending device, which made every send fail with "Failed to send".
     xhr.open('POST', SERVER + '/upload');
     xhr.upload.onprogress = (e) => {
       if (!e.lengthComputable) return;
@@ -394,8 +398,15 @@ function sendFiles(files) {
       updateFileProgress(msgObj);
     };
     xhr.onload = () => {
-      if (xhr.status !== 200) { fail(file.name); return; }
-      const data = JSON.parse(xhr.responseText);
+      if (xhr.status !== 200) { fail(file.name, 'server returned ' + xhr.status); return; }
+      let data;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        fail(file.name, 'bad response from server');
+        return;
+      }
+      if (!data || !data.fileId) { fail(file.name, 'server did not return a file id'); return; }
       msgObj.file.id = data.fileId;
       msgObj.uploading = false;
       ws.send(JSON.stringify({
@@ -405,13 +416,17 @@ function sendFiles(files) {
       renderMessages();
       next();
     };
-    xhr.onerror = () => fail(file.name);
+    xhr.onerror = () => fail(file.name, 'network error - could not reach this computer');
+    xhr.ontimeout = () => fail(file.name, 'timed out');
+    xhr.onabort = () => fail(file.name, 'cancelled');
     xhr.send(fd);
 
-    function fail(name) {
+    function fail(name, why) {
       msgObj.uploading = false;
-      addSystemMsg(`Failed to send ${name}`);
-      sendingFile = false;
+      msgObj.failed = true;
+      renderMessages(); // re-render first: this rebuilds the list and would wipe the notice below
+      addSystemMsg(`Failed to send ${name}${why ? ' (' + why + ')' : ''}`);
+      next(); // keep sending the remaining files
     }
   }
   addSystemMsg(`Sending ${files.length} file(s)...`);
@@ -489,6 +504,7 @@ function renderMessages() {
   if (!selectedPeer || !chats[selectedPeer]) return;
   const msgs = chats[selectedPeer];
   messages.innerHTML = msgs.map((m, idx) => {
+    if (m.sys) return `<div class="sys-msg">${escapeHtml(m.text)}</div>`;
     const isOwn = m.from === selfId;
     const cls = isOwn ? 'own' : 'other';
     const time = m.time ? new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
@@ -531,10 +547,13 @@ function renderMessages() {
 }
 
 function addSystemMsg(text) {
-  const div = document.createElement('div');
-  div.className = 'sys-msg';
-  div.textContent = text;
-  messages.appendChild(div);
+  // System notices live in chat state, not the DOM: renderMessages() rebuilds
+  // the message list from scratch, so a DOM-appended notice was wiped by the
+  // next render (e.g. the success render of the following file).
+  const chat = selectedPeer || 'self';
+  if (!chats[chat]) chats[chat] = [];
+  chats[chat].push({ sys: true, text: String(text), time: Date.now() });
+  renderMessages();
   scrollToBottom();
 }
 
@@ -613,11 +632,12 @@ let joinUrl = `${location.origin}/`;
 document.getElementById('urlDisplay').textContent = joinUrl;
 
 // Use the server's real LAN IP so others can actually join
-fetch(SERVER + '/api/ip')
+let serverOrigin = location.origin;
+fetch('/api/ip')
   .then(r => r.json())
   .then(d => {
-    joinUrl = `http://${d.ip}:${d.port}/`;
-    document.getElementById('urlDisplay').textContent = joinUrl;
+    serverOrigin = `http://${d.ip}:${d.port}`;
+    document.getElementById('urlDisplay').textContent = serverOrigin + '/';
   })
   .catch(() => {});
 
