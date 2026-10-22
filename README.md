@@ -2,6 +2,8 @@
 
 LAN file & message sharing. Telegram-style UI. Zero config. Single ~8MB Go binary.
 
+![lanDrop chat with file sharing](Screenshot_landrop.jpg)
+
 ## Run
 
 ```bash
