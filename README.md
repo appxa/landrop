@@ -20,7 +20,7 @@ sh scripts/build-go.sh
 Outputs to `dist/`:
 - `dist/landrop` — Linux amd64 binary (~8MB)
 - `dist/landrop.exe` — Windows amd64 binary (~8MB)
-- `dist/landrop_1.0.0_amd64.deb` — Debian/Ubuntu package (~2.3MB)
+- `dist/landrop_1.0.1_amd64.deb` — Debian/Ubuntu package (~2.3MB)
 
 Cross-compiles from any machine; no Node.js or Electron needed. The whole app
 (server + UI) is a single embedded binary.

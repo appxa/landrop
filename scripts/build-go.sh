@@ -13,8 +13,8 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-s -w" -o dist/landro
 echo "==> deb"
 mkdir -p /tmp/landrop-deb/DEBIAN /tmp/landrop-deb/usr/bin
 cp dist/landrop /tmp/landrop-deb/usr/bin/
-printf 'Package: landrop\nVersion: 1.0.0\nSection: net\nPriority: optional\nArchitecture: amd64\nMaintainer: appxa <appxa@users.noreply.github.com>\nDescription: LAN file sharing & chat\n Share files and chat with devices on your local network.\n' > /tmp/landrop-deb/DEBIAN/control
-dpkg-deb --build /tmp/landrop-deb dist/landrop_1.0.0_amd64.deb >/dev/null
+printf 'Package: landrop\nVersion: 1.0.1\nSection: net\nPriority: optional\nArchitecture: amd64\nMaintainer: appxa <appxa@users.noreply.github.com>\nDescription: LAN file sharing & chat\n Share files and chat with devices on your local network.\n' > /tmp/landrop-deb/DEBIAN/control
+dpkg-deb --build /tmp/landrop-deb dist/landrop_1.0.1_amd64.deb >/dev/null
 
 echo "==> AppImage"
 # appimagetool is not part of a stock Go/CI image. Without this guard the
@@ -22,7 +22,7 @@ echo "==> AppImage"
 if ! command -v appimagetool >/dev/null 2>&1; then
   echo "    appimagetool not found - skipping AppImage"
   echo "    get it from https://github.com/AppImage/AppImageKit/releases, then re-run this script"
-  ls -lh dist/landrop dist/landrop.exe dist/landrop_1.0.0_amd64.deb
+  ls -lh dist/landrop dist/landrop.exe dist/landrop_1.0.1_amd64.deb
   exit 0
 fi
 rm -rf /tmp/landrop-appdir
@@ -48,4 +48,4 @@ EOF
 chmod +x /tmp/landrop-appdir/AppRun
 ARCH=x86_64 appimagetool /tmp/landrop-appdir dist/landrop-linux-amd64.AppImage >/dev/null
 
-ls -lh dist/landrop dist/landrop.exe dist/landrop_1.0.0_amd64.deb dist/landrop-linux-amd64.AppImage
+ls -lh dist/landrop dist/landrop.exe dist/landrop_1.0.1_amd64.deb dist/landrop-linux-amd64.AppImage

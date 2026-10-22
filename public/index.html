@@ -365,15 +365,27 @@ function sendMessage() {
 document.getElementById('attachBtn').onclick = () => fileInput.click();
 fileInput.onchange = () => {
   if (!fileInput.files.length || !selectedPeer) return;
-  sendFiles(fileInput.files);
-  fileInput.value = '';
+  // Snapshot the list: the FileList of a file input is live, so clearing the
+  // input below would empty the very list we are iterating over.
+  sendFiles(Array.from(fileInput.files));
+  // The input is NOT cleared here. On a phone the picked files live in the
+  // input's file store; emptying it releases them and aborts the upload that
+  // is still running ("network error - could not reach this computer" after a
+  // few milliseconds, with nothing arriving at the server). The input is
+  // cleared once the queue is done instead.
 };
 
 function sendFiles(files) {
   sendingFile = true;
   let i = 0;
   function next() {
-    if (i >= files.length) { sendingFile = false; return; }
+    if (i >= files.length) {
+      sendingFile = false;
+      // The picked files are released only now: clearing the input earlier
+      // aborted the upload that was still running.
+      fileInput.value = '';
+      return;
+    }
     const file = files[i++];
     const msgObj = {
       from: selfId, fromName: selfName, fromColor: selfColor,
@@ -384,9 +396,20 @@ function sendFiles(files) {
     chats[selectedPeer].push(msgObj);
     renderMessages();
 
+    // Send a Blob copy of the file, not the File object itself.
+    //
+    // A File that comes straight from the phone's file picker is backed by a
+    // content:// provider. Chrome on Android cannot stream such a File as a
+    // request body: the upload dies before a single byte is sent (the browser
+    // reports a network error and the server never sees the request). A Blob
+    // copy of the very same bytes uploads fine.
+    const blob = file.slice(0, file.size);
     const fd = new FormData();
-    fd.append('file', file, file.name);
+    fd.append('file', blob, file.name);
     const xhr = new XMLHttpRequest();
+    const started = Date.now();
+    let sent = 0;
+    report({ event: 'upload_start', name: file.name, size: file.size, type: file.type, peer: selectedPeer });
     // Always upload to the origin this page was served from. The server's
     // self-reported LAN IP (serverOrigin) is only a hint for humans to copy --
     // it can name a VPN/tunnel or wrong-subnet address that is unreachable from
@@ -394,10 +417,12 @@ function sendFiles(files) {
     xhr.open('POST', '/upload');
     xhr.upload.onprogress = (e) => {
       if (!e.lengthComputable) return;
+      sent = e.loaded;
       msgObj.progress = Math.round(e.loaded / e.total * 100);
       updateFileProgress(msgObj);
     };
     xhr.onload = () => {
+      report({ event: 'upload_done', name: file.name, size: file.size, status: xhr.status, ms: Date.now() - started });
       if (xhr.status !== 200) { fail(file.name, 'server returned ' + xhr.status); return; }
       let data;
       try {
@@ -409,19 +434,25 @@ function sendFiles(files) {
       if (!data || !data.fileId) { fail(file.name, 'server did not return a file id'); return; }
       msgObj.file.id = data.fileId;
       msgObj.uploading = false;
-      ws.send(JSON.stringify({
-        type: 'file', to: selectedPeer,
-        fileId: data.fileId, fileName: file.name, fileSize: file.size, mimeType: file.type,
-      }));
+      announceFile(file, data.fileId);
       renderMessages();
       next();
     };
-    xhr.onerror = () => fail(file.name, 'network error - could not reach this computer');
-    xhr.ontimeout = () => fail(file.name, 'timed out');
+    xhr.onerror = () => {
+      report({ event: 'upload_error', name: file.name, size: file.size, sent, status: xhr.status,
+              readyState: xhr.readyState, online: navigator.onLine, ms: Date.now() - started });
+      fail(file.name, `network error - could not reach this computer ${netInfo(started)}`);
+    };
+    xhr.ontimeout = () => {
+      report({ event: 'upload_timeout', name: file.name, size: file.size, sent, status: xhr.status, ms: Date.now() - started });
+      fail(file.name, `timed out ${netInfo(started)}`);
+    };
     xhr.onabort = () => fail(file.name, 'cancelled');
     xhr.send(fd);
 
     function fail(name, why) {
+      console.log(`[landrop] failed to send ${name}: ${why}`);
+      report({ event: 'upload_failed', name, why });
       msgObj.uploading = false;
       msgObj.failed = true;
       renderMessages(); // re-render first: this rebuilds the list and would wipe the notice below
@@ -431,6 +462,44 @@ function sendFiles(files) {
   }
   addSystemMsg(`Sending ${files.length} file(s)...`);
   next();
+}
+
+// announceFile tells the other device that a file is ready to download.
+//
+// A dead chat connection must never stop the file queue: the file itself is
+// already on the server, so a failed announcement is reported and the queue
+// continues with the next file.
+function announceFile(file, fileId) {
+  const state = ws ? ws.readyState : -1;
+  try {
+    if (state !== WebSocket.OPEN) throw new Error(`websocket is not open (state ${state})`);
+    ws.send(JSON.stringify({
+      type: 'file', to: selectedPeer,
+      fileId: fileId, fileName: file.name, fileSize: file.size, mimeType: file.type,
+    }));
+    report({ event: 'announce_ok', name: file.name, fileId, to: selectedPeer, wsState: state });
+  } catch (err) {
+    console.log('[landrop] could not announce the file:', err);
+    report({ event: 'announce_failed', name: file.name, fileId, to: selectedPeer, wsState: state, error: String(err) });
+  }
+}
+
+// report tells the server what the browser is doing. The server prints it in
+// its log, which is the only place to look when a phone cannot send a file.
+function report(ev) {
+  try {
+    fetch('/log', { method: 'POST', body: JSON.stringify(ev) }).catch(() => {});
+  } catch (e) { /* ignore */ }
+}
+
+// netInfo describes what the browser knew about a failed request, so the
+// chat message says more than "network error".
+function netInfo(startedAt) {
+  const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
+  let net = 'unknown network';
+  if (navigator.onLine === false) net = 'browser is OFFLINE';
+  else if (navigator.onLine === true) net = 'browser is online';
+  return `(${secs}s, ${net})`;
 }
 
 function updateFileProgress(msgObj) {
@@ -597,7 +666,7 @@ document.addEventListener('drop', (e) => {
 });
 
 fileDropInput.onchange = () => {
-  if (fileDropInput.files.length) sendFiles(fileDropInput.files);
+  if (fileDropInput.files.length) sendFiles(Array.from(fileDropInput.files));
   fileDropInput.value = '';
 };
 
